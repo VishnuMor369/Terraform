@@ -1,0 +1,13 @@
+#!/bin/bash
+apt-get update -y
+apt-get install -y nodejs npm
+
+mkdir -p /app/views
+echo '${app_b64}' | base64 -d > /app/app.js
+echo '${package_b64}' | base64 -d > /app/package.json
+echo '${view_b64}' | base64 -d > /app/views/index.ejs
+
+cd /app
+npm install
+export BACKEND_URL=http://${backend_ip}:8000/api
+nohup npm start > /app/frontend.log 2>&1 &

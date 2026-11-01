@@ -1,0 +1,48 @@
+#!/bin/bash
+set -eux
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y python3 python3-pip python3-venv nodejs npm rsync
+
+mkdir -p /opt/terraform-app/backend/templates /opt/terraform-app/frontend/views
+echo '${backend_app_b64}' | base64 -d > /opt/terraform-app/backend/app.py
+echo '${backend_business_b64}' | base64 -d > /opt/terraform-app/backend/business.py
+echo '${backend_requirements_b64}' | base64 -d > /opt/terraform-app/backend/requirements.txt
+echo '${backend_template_b64}' | base64 -d > /opt/terraform-app/backend/templates/index.html
+echo '${frontend_app_b64}' | base64 -d > /opt/terraform-app/frontend/app.js
+echo '${frontend_package_b64}' | base64 -d > /opt/terraform-app/frontend/package.json
+echo '${frontend_view_b64}' | base64 -d > /opt/terraform-app/frontend/views/index.ejs
+
+python3 -m venv /opt/terraform-app/backend/venv
+/opt/terraform-app/backend/venv/bin/pip install -r /opt/terraform-app/backend/requirements.txt
+
+cd /opt/terraform-app/frontend && npm install
+
+cat >/etc/systemd/system/flask-terraform.service <<'SERVICE'
+[Unit]
+Description=Terraform Flask Backend
+After=network.target
+[Service]
+WorkingDirectory=/opt/terraform-app/backend
+ExecStart=/opt/terraform-app/backend/venv/bin/python app.py
+Restart=always
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+cat >/etc/systemd/system/express-terraform.service <<'SERVICE'
+[Unit]
+Description=Terraform Express Frontend
+After=network.target flask-terraform.service
+[Service]
+WorkingDirectory=/opt/terraform-app/frontend
+Environment=BACKEND_URL=http://127.0.0.1:8000/api
+ExecStart=/usr/bin/npm start
+Restart=always
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable --now flask-terraform.service
+systemctl enable --now express-terraform.service
