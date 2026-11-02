@@ -1,4 +1,6 @@
 #!/bin/bash
+set -eux
+export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y python3-pip python3-venv
 
@@ -11,4 +13,18 @@ echo '${template_b64}' | base64 -d > /app/templates/index.html
 cd /app
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
-nohup venv/bin/python app.py > /app/backend.log 2>&1 &
+
+cat >/etc/systemd/system/flask-backend.service <<'SERVICE'
+[Unit]
+Description=Flask Backend
+After=network.target
+[Service]
+WorkingDirectory=/app
+ExecStart=/app/venv/bin/python app.py
+Restart=always
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable --now flask-backend.service

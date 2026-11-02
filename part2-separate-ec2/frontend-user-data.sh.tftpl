@@ -1,4 +1,6 @@
 #!/bin/bash
+set -eux
+export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y nodejs npm
 
@@ -9,5 +11,19 @@ echo '${view_b64}' | base64 -d > /app/views/index.ejs
 
 cd /app
 npm install
-export BACKEND_URL=http://${backend_ip}:8000/api
-nohup npm start > /app/frontend.log 2>&1 &
+
+cat >/etc/systemd/system/express-frontend.service <<'SERVICE'
+[Unit]
+Description=Express Frontend
+After=network.target
+[Service]
+WorkingDirectory=/app
+Environment=BACKEND_URL=http://${backend_ip}:8000/api
+ExecStart=/usr/bin/npm start
+Restart=always
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable --now express-frontend.service

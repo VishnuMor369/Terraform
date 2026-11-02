@@ -1,4 +1,6 @@
 terraform {
+  required_version = ">= 1.11"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -27,7 +29,7 @@ data "aws_availability_zones" "available" {
 
 resource "aws_vpc" "main" {
   cidr_block = "10.20.0.0/16"
-  tags = { Name = "Vishnu-Terraform-VPC" }
+  tags       = { Name = "Vishnu-Terraform-VPC" }
 }
 
 resource "aws_subnet" "public" {
@@ -66,11 +68,20 @@ resource "aws_security_group" "backend" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Flask is exposed to the internet on 8000 (assignment requirement)
   ingress {
     from_port   = 8000
     to_port     = 8000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Frontend -> backend traffic over the private network
+  ingress {
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.frontend.id]
   }
 
   egress {
@@ -97,13 +108,6 @@ resource "aws_security_group" "frontend" {
     to_port     = 3000
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port       = 8000
-    to_port         = 8000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.backend.id]
   }
 
   egress {
@@ -139,10 +143,10 @@ resource "aws_instance" "frontend" {
   vpc_security_group_ids = [aws_security_group.frontend.id]
 
   user_data = templatefile("${path.module}/frontend-user-data.sh.tftpl", {
-    app_b64       = filebase64("${path.module}/../application/frontend/app.js")
-    package_b64   = filebase64("${path.module}/../application/frontend/package.json")
-    view_b64      = filebase64("${path.module}/../application/frontend/views/index.ejs")
-    backend_ip    = aws_instance.backend.private_ip
+    app_b64     = filebase64("${path.module}/../application/frontend/app.js")
+    package_b64 = filebase64("${path.module}/../application/frontend/package.json")
+    view_b64    = filebase64("${path.module}/../application/frontend/views/index.ejs")
+    backend_ip  = aws_instance.backend.private_ip
   })
 
   tags = { Name = "Vishnu-Express-Frontend" }

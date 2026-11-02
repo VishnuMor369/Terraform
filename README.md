@@ -1,91 +1,81 @@
 # Terraform AWS Deployment – Vishnu
 
-This submission updates the existing AWS deployment project and provisions the AWS infrastructure with Terraform.
+Deploys a Flask backend (port 8000) and an Express frontend (port 3000) on AWS with Terraform in three ways.
+GitHub: https://github.com/VishnuMor369/Terraform.git
 
-## Application
-- Flask backend: port 8000
-- Express frontend: port 3000
-- Existing Dockerfiles and application source are retained under `application/`.
-
-## Assignment mapping
-### Part 1 – Single EC2
-Terraform creates one EC2 instance and installs/runs Flask and Express as systemd services.
-
-### Part 2 – Separate EC2
-Terraform creates a VPC, public subnet, route table, two security groups and two EC2 instances. The frontend receives the backend private IP through Terraform.
-
-### Part 3 – ECR + ECS + VPC + ALB
-Terraform creates two ECR repositories, a VPC with two public subnets, ECS Fargate cluster/services, IAM execution role, target groups and an Application Load Balancer. The ALB routes `/api` to Flask and all other requests to Express.
+## Folder structure
+```
+bootstrap-state/     creates the S3 bucket used for remote state (run once)
+part1-single-ec2/    Flask + Express on ONE EC2 instance
+part2-separate-ec2/  Flask and Express on TWO EC2 instances in a custom VPC
+part3-ecs-ecr-alb/   Docker images in ECR, ECS Fargate services, VPC, ALB
+application/         Flask (backend/) and Express (frontend/) source + Dockerfiles
+screenshots/         terraform and AWS console screenshots
+```
+Each part contains `main.tf`, `variables.tf`, `outputs.tf` and `backend.tf`. Parts 1 and 2 also contain
+the user-data templates (`*.tftpl`) that `main.tf` loads with `templatefile()` — these files must be
+committed to Git (`git add .` – no `.gitignore` rule should exclude `*.tftpl`).
 
 ## Prerequisites
-- AWS CLI configured (`aws configure`)
-- Terraform >= 1.5
-- Docker for Part 3
-- An existing EC2 key pair for Parts 1 and 2
-- Appropriate AWS IAM permissions
+- Terraform >= 1.11, AWS CLI configured (`aws configure`), Docker (Part 3)
+- An existing EC2 key pair in us-east-1 (required for Parts 1 and 2). Copy `terraform.tfvars.example` to `terraform.tfvars` and set `key_name`.
+- Default instance type is `t3.micro` (Free Tier eligible on new accounts; `t2.micro` caused `InvalidParameterCombination`).
 
-## Part 1 commands
+## Step 0 – Remote state (S3 backend)
+`backend.tf` in every part stores state in S3 bucket `vishnu-terraform-state-<AWS_ACCOUNT_ID>`
+(currently `710882444873`; change it in the three `backend.tf` files if your account ID is different).
+Create the bucket once:
+```bash
+cd bootstrap-state
+terraform init
+terraform apply
+terraform output state_bucket_name
+```
+
+## Part 1 – Single EC2
 ```bash
 cd part1-single-ec2
 terraform init
-terraform fmt
-terraform validate
-terraform plan -var="key_name=YOUR_KEY_PAIR"
-terraform apply -var="key_name=YOUR_KEY_PAIR"
-terraform output
-```
-
-## Part 2 commands
-```bash
-cd part2-separate-ec2
-terraform init
-terraform fmt
-terraform validate
-terraform plan -var="key_name=YOUR_KEY_PAIR"
-terraform apply -var="key_name=YOUR_KEY_PAIR"
-terraform output
-```
-
-## Part 3 commands
-First build and push the existing application images to ECR:
-```bash
-cd ..
-./part3-ecs-ecr-alb/build-and-push.sh
-cd part3-ecs-ecr-alb
-terraform init
-terraform fmt
 terraform validate
 terraform plan
 terraform apply
+terraform output          # frontend_url = http://<ip>:3000 , backend_url = http://<ip>:8000
+```
+User-data (`user-data.sh.tftpl`) installs Python and Node.js and starts Flask and Express as systemd services.
+Express uses `BACKEND_URL=http://127.0.0.1:8000/api`. Wait 2–3 minutes after apply for installation to finish.
+
+## Part 2 – Separate EC2 instances
+```bash
+cd part2-separate-ec2
+terraform init && terraform validate && terraform plan && terraform apply
 terraform output
 ```
+Creates VPC, public subnet, internet gateway, route table, two security groups and two instances.
+The frontend gets the backend private IP through Terraform (`BACKEND_URL=http://<backend_private_ip>:8000/api`).
+Both apps are open to the internet on their ports; the backend SG also allows 8000 from the frontend SG.
 
-The ECR repositories are created by Terraform, so if they do not exist yet, run `terraform apply` once for the ECR resources, then run the image build/push script, and run `terraform apply` again to deploy ECS tasks.
+## Part 3 – ECR + ECS Fargate + VPC + ALB
+The ECS services need images in ECR, so deploy in this order:
+```bash
+cd part3-ecs-ecr-alb
+terraform init
+terraform apply -target=aws_ecr_repository.backend -target=aws_ecr_repository.frontend   # 1. ECR repos
+./build-and-push.sh                                                                         # 2. build + push images
+terraform plan
+terraform apply                                                                             # 3. VPC, ALB, ECS
+terraform output                                                                            # alb_url
+```
+- ECR repository names (`vishnu-backend`, `vishnu-frontend`) come from variables; `build-and-push.sh` reads them from Terraform outputs, so names always match.
+- ALB listener (port 80): `/api` and `/api/*` -> Flask target group, everything else -> Express target group.
+- The frontend task sets `BACKEND_URL=http://<ALB DNS>/api`, so the Express container reaches Flask through the ALB.
+- Open `http://<alb_dns_name>` (frontend) and `http://<alb_dns_name>/api` (backend). Targets take 1–2 minutes to become healthy.
 
-## Terraform state
-The assignment asks for Terraform state management. `backend.tf.example` shows the S3 backend configuration. Create a unique S3 bucket, copy it to `backend.tf`, replace the placeholder bucket name, and run `terraform init` again before deployment.
+## Clean up (avoid AWS charges)
+Run `terraform destroy` in each part (Part 3 first deletes the ECR images automatically, `force_delete = true`).
+Destroy `bootstrap-state` last, and only after the other parts are destroyed (empty the versioned bucket first).
 
-## Documentation
-The Word documentation file is `Terraform_Assignment_Documentation.docx`.
+## Documentation and screenshots
 
-## Screenshots
-The `screenshots/legacy/` directory contains screenshots reused from the previous AWS assignment. For the Terraform submission, add screenshots of:
-1. `terraform init`
-2. `terraform validate`
-3. `terraform plan`
-4. `terraform apply`
-5. Terraform outputs
-6. AWS EC2/ECS/ECR/VPC/ALB resources after deployment
-7. Final frontend URL working
-8. `/api` backend response or application output
-
-Do not claim that a Terraform deployment was executed unless the screenshot shows the actual command/output.
-
-## GitHub repository
-Add your final GitHub repository URL to `GitHub-Link.txt`.
-
-
-## Simple Terraform Code
-The Terraform files are intentionally written in a simple beginner-friendly style similar to the reference examples:
-provider -> variables -> resources -> outputs.
-AWS credentials should be configured using AWS CLI/environment variables. Do not put access keys directly in Terraform files.
+The final documentation is `Terraform_Assignment_Documentation.docx`. The supplied evidence verifies the S3 bootstrap and Part 3 end-to-end. Part 1 first-run Free Tier failure is documented honestly, and Part 2 source is included but is not claimed as successfully applied because no successful Part 2 verification screenshot is available in the final evidence set.
+`Terraform_Assignment_Documentation.docx` explains every step. Screenshots go in `screenshots/`
+(part1, part2, part3, state) and are inserted into the docx where marked.

@@ -1,0 +1,2 @@
+# Copy to terraform.tfvars and put your real key pair name
+key_name = "YOUR_KEY_PAIR_NAME"

@@ -1,4 +1,6 @@
 terraform {
+  required_version = ">= 1.11"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -16,11 +18,23 @@ data "aws_availability_zones" "available" {
 }
 
 resource "aws_ecr_repository" "backend" {
-  name = "vishnu-backend"
+  name         = var.backend_repo_name
+  force_delete = true
 }
 
 resource "aws_ecr_repository" "frontend" {
-  name = "vishnu-frontend"
+  name         = var.frontend_repo_name
+  force_delete = true
+}
+
+resource "aws_cloudwatch_log_group" "backend" {
+  name              = "/ecs/vishnu-backend"
+  retention_in_days = 7
+}
+
+resource "aws_cloudwatch_log_group" "frontend" {
+  name              = "/ecs/vishnu-frontend"
+  retention_in_days = 7
 }
 
 resource "aws_vpc" "main" {
@@ -115,9 +129,9 @@ resource "aws_iam_role" "ecs" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect = "Allow"
+      Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
-      Action = "sts:AssumeRole"
+      Action    = "sts:AssumeRole"
     }]
   })
 }
@@ -196,6 +210,15 @@ resource "aws_ecs_task_definition" "backend" {
     portMappings = [{
       containerPort = 8000
     }]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.backend.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "backend"
+      }
+    }
   }])
 }
 
@@ -214,6 +237,22 @@ resource "aws_ecs_task_definition" "frontend" {
     portMappings = [{
       containerPort = 3000
     }]
+
+    # The Express server calls Flask server-side, so it needs a URL that is
+    # reachable from inside the VPC. The ALB routes /api/* to the Flask service.
+    environment = [{
+      name  = "BACKEND_URL"
+      value = "http://${aws_lb.app.dns_name}/api"
+    }]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.frontend.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "frontend"
+      }
+    }
   }])
 }
 
@@ -235,6 +274,8 @@ resource "aws_ecs_service" "backend" {
     container_name   = "backend"
     container_port   = 8000
   }
+
+  depends_on = [aws_lb_listener_rule.backend]
 }
 
 resource "aws_ecs_service" "frontend" {
@@ -255,4 +296,6 @@ resource "aws_ecs_service" "frontend" {
     container_name   = "frontend"
     container_port   = 3000
   }
+
+  depends_on = [aws_lb_listener.http]
 }

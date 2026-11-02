@@ -13,3 +13,7 @@ output "cluster" {
 output "alb_url" {
   value = "http://${aws_lb.app.dns_name}"
 }
+
+output "backend_api_url" {
+  value = "http://${aws_lb.app.dns_name}/api"
+}
